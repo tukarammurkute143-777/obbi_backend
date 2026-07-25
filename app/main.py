@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from slowapi.middleware import SlowAPIMiddleware
 
-from app.core.config import settings
 from app.core.middleware import IPBlockMiddleware, JWTAuthMiddleware
 from app.core.rate_limit import RateLimitExceeded, limiter, rate_limit_handler
 from app.api.routes.auth import router as auth_router
@@ -35,14 +34,10 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
 app.add_middleware(JWTAuthMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(IPBlockMiddleware)
-# Deployed frontend comes from FRONTEND_URL; localhost stays for local dev.
-# dict.fromkeys dedupes while keeping order, since FRONTEND_URL is itself
-# http://localhost:3000 in a local .env.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list(dict.fromkeys(
-        [settings.FRONTEND_URL, "http://localhost:3000"]
-    )),
+    allow_origins=["https://obbi-frontend.vercel.app",
+                   "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

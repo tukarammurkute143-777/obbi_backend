@@ -1,3 +1,4 @@
+from app.core.config import settings
 from app.core.database import db
 from app.core.middleware import invalidate_ip_cache
 from app.core.security import (
@@ -85,13 +86,22 @@ async def send_otp(mobile: str, ip: str) -> dict:
     }).execute()
     
     # TODO: Send via WhatsApp API
-    print(f"OTP for {mobile}: {otp}")  # Dev only
-    
-    return {
+    is_production = settings.APP_ENV.strip().lower() == 'production'
+
+    if not is_production:
+        # Both of these hand out the OTP for any number, so they are dev-only:
+        # the response field lets the caller skip WhatsApp entirely, and the
+        # log line would write every OTP into the hosting provider's logs.
+        print(f"OTP for {mobile}: {otp}")
+
+    response = {
         'success': True,
-        'message': 'OTP sent on WhatsApp',
-        'dev_otp': otp  # Remove in production!
+        'message': 'OTP sent on WhatsApp'
     }
+    if not is_production:
+        response['dev_otp'] = otp
+
+    return response
 
 async def verify_otp(
     mobile: str,
