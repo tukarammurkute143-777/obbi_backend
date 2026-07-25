@@ -1,0 +1,53 @@
+# Obii Cabs — Backend Requirements
+# Python 3.14 Compatible
+# Install: pip install -r requirements.txt
+
+# Core Framework
+fastapi==0.136.1
+uvicorn==0.46.0
+python-dotenv==1.2.2
+
+# Database
+supabase==2.15.2
+
+# Authentication & Security
+python-jose[cryptography]==3.5.0
+passlib==1.7.4
+bcrypt==4.3.0
+python-multipart==0.0.20
+
+# Cache
+redis==5.2.1
+
+# AI & Agents (compatible versions)
+langsmith==0.3.45
+langchain-core==0.3.86
+langchain==0.3.25
+langchain-openai==0.3.16
+langchain-community==0.3.24
+langgraph==0.4.8
+openai==1.86.0
+
+# Email
+resend==2.10.0
+
+# HTTP Client
+httpx==0.28.1
+
+# Data Validation
+pydantic==2.13.3
+pydantic-settings==2.10.1
+
+# Rate Limiting
+slowapi==0.1.9
+
+# Utilities
+python-dateutil==2.9.0
+pytz==2025.2
+phonenumbers==9.0.7
+
+# Maps
+googlemaps==4.10.0
+
+# PDF Generation
+fpdf2==2.8.3
