@@ -3,10 +3,11 @@ from app.core.config import settings
 from app.core.middleware import get_client_ip
 from app.core.rate_limit import limiter
 from app.models.auth import (
+    GoogleAuthRequest,
     SendOTPRequest,
     VerifyOTPRequest
 )
-from app.services.auth_service import send_otp, verify_otp
+from app.services.auth_service import google_auth, send_otp, verify_otp
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
@@ -38,6 +39,31 @@ async def verify_otp_endpoint(
     )
     if not result['success']:
         raise HTTPException(status_code=400, detail=result['message'])
+    return result
+
+@router.post("/google")
+async def google_auth_endpoint(
+    request: Request,
+    body: GoogleAuthRequest
+):
+    """
+    Exchange a Google ID token (from the frontend's Sign-In flow) for our own
+    JWT pair. Creates the user on first login, otherwise reuses the row matching
+    the token's verified email.
+    """
+    ip = get_client_ip(request)
+    result = await google_auth(
+        body.token,
+        ip,
+        body.device_fingerprint,
+        body.location
+    )
+    if not result['success']:
+        # 503 when Google login is unconfigured; 401 for a token we rejected.
+        raise HTTPException(
+            status_code=result.get('status', 401),
+            detail=result['message']
+        )
     return result
 
 @router.get("/health")

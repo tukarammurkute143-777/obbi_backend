@@ -23,6 +23,7 @@ python-jose[cryptography]==3.5.0
 passlib==1.7.4
 bcrypt==4.3.0
 python-multipart==0.0.20
+google-auth==2.49.2      # Google ID token verification for /api/auth/google
 
 # Cache
 redis==5.2.1

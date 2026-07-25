@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     OWNER_PHONE: str = ""
     OWNER_EMAIL: str = ""
 
+    # OAuth client ID from Google Cloud Console. REQUIRED for /api/auth/google:
+    # google-auth only verifies a token's audience when one is supplied, so
+    # leaving this blank would accept ID tokens minted for any other Google app.
+    # The endpoint refuses to run rather than skip that check.
+    GOOGLE_CLIENT_ID: str = ""
+
     # Rate limiting — "memory://" is per-process. Point this at REDIS_URL
     # (e.g. "redis://localhost:6379") once running more than one worker,
     # otherwise each worker keeps its own separate counters.
