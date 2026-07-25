@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     OWNER_PHONE: str = ""
     OWNER_EMAIL: str = ""
 
+    # Rate limiting — "memory://" is per-process. Point this at REDIS_URL
+    # (e.g. "redis://localhost:6379") once running more than one worker,
+    # otherwise each worker keeps its own separate counters.
+    RATE_LIMIT_STORAGE_URI: str = "memory://"
+    RATE_LIMIT_GENERAL: str = "100/minute"
+    RATE_LIMIT_SEND_OTP: str = "3/hour"
+    RATE_LIMIT_VERIFY_OTP: str = "5/hour"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

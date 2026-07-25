@@ -9,6 +9,14 @@ python-dotenv==1.2.2
 
 # Database
 supabase==2.15.2
+# Pinned explicitly: supabase 2.15.2 needs postgrest>0.19, and an older
+# postgrest silently breaks every query with
+# "SyncPostgrestClient.__init__() got an unexpected keyword argument 'proxy'".
+postgrest==1.0.2
+gotrue==2.12.4
+realtime==2.4.3
+storage3==0.11.3
+supafunc==0.9.4
 
 # Authentication & Security
 python-jose[cryptography]==3.5.0
@@ -37,9 +45,11 @@ httpx==0.28.1
 # Data Validation
 pydantic==2.13.3
 pydantic-settings==2.10.1
+email-validator==2.3.0   # required by pydantic EmailStr
 
 # Rate Limiting
 slowapi==0.1.9
+limits==5.8.0            # slowapi's storage backend
 
 # Utilities
 python-dateutil==2.9.0

@@ -1,4 +1,5 @@
-from app.core.database import supabase
+from app.core.database import db
+from app.core.middleware import invalidate_ip_cache
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -15,7 +16,7 @@ def validate_indian_mobile(mobile: str) -> bool:
     return bool(re.match(pattern, mobile))
 
 def check_ip_blocked(ip: str) -> bool:
-    result = supabase.table('blocked_ips')\
+    result = db.table('blocked_ips')\
         .select('id')\
         .eq('ip_address', ip)\
         .eq('is_active', True)\
@@ -24,7 +25,7 @@ def check_ip_blocked(ip: str) -> bool:
 
 def check_multi_account(ip: str, identifier: str) -> bool:
     """Check if same IP used with 2+ different accounts"""
-    result = supabase.table('login_attempts')\
+    result = db.table('login_attempts')\
         .select('email, mobile')\
         .eq('ip_address', ip)\
         .eq('success', True)\
@@ -42,11 +43,14 @@ def check_multi_account(ip: str, identifier: str) -> bool:
 
 def block_ip(ip: str, reason: str):
     """Block suspicious IP"""
-    supabase.table('blocked_ips').upsert({
+    db.table('blocked_ips').upsert({
         'ip_address': ip,
         'reason': reason,
         'is_active': True
     }).execute()
+    # IPBlockMiddleware caches lookups for 60s; drop this IP's entry so the
+    # block applies to the very next request instead of after the TTL.
+    invalidate_ip_cache(ip)
 
 async def send_otp(mobile: str, ip: str) -> dict:
     # Validate mobile
@@ -73,7 +77,7 @@ async def send_otp(mobile: str, ip: str) -> dict:
     }
     
     # Log attempt
-    supabase.table('login_attempts').insert({
+    db.table('login_attempts').insert({
         'ip_address': ip,
         'mobile': mobile,
         'login_type': 'mobile',
@@ -120,7 +124,7 @@ async def verify_otp(
     del otp_store[mobile]
     
     # Get or create user
-    user_result = supabase.table('users')\
+    user_result = db.table('users')\
         .select('*')\
         .eq('mobile', mobile)\
         .execute()
@@ -128,7 +132,7 @@ async def verify_otp(
     is_new_user = len(user_result.data) == 0
     
     if is_new_user:
-        new_user = supabase.table('users').insert({
+        new_user = db.table('users').insert({
             'mobile': mobile,
             'login_type': 'mobile',
             'location': location or 'Unknown',
@@ -139,14 +143,14 @@ async def verify_otp(
     else:
         user = user_result.data[0]
         # Update visit count
-        supabase.table('users').update({
+        db.table('users').update({
             'last_login': datetime.utcnow().isoformat(),
             'total_visits': user['total_visits'] + 1,
             'is_new_user': False
         }).eq('id', user['id']).execute()
     
     # Update login attempt
-    supabase.table('login_attempts').update({
+    db.table('login_attempts').update({
         'success': True,
         'device_fingerprint': device_fingerprint
     }).eq('mobile', mobile)\
