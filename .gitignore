@@ -1,4 +1,8 @@
 .env
+# Covers .env.local, .env.bak, .env.production etc. — plain ".env" does not
+# match those, and `git add .` would happily commit them.
+.env.*
+!.env.example
 __pycache__/
 *.pyc
 venv/

@@ -238,16 +238,34 @@ async def get_current_user(
     return user
 
 
+def normalize_mobile(value: Optional[str]) -> str:
+    """
+    Reduce an Indian mobile number to its bare last 10 digits.
+
+    The OTP flow stores 10 digits ("7499313125") while OWNER_PHONE is normally
+    written with a country code ("+917499313125"), so a plain string compare
+    never matches. Stripping to the last 10 digits also absorbs "0" prefixes,
+    spaces and dashes.
+
+    Returns "" when there are fewer than 10 digits, so a blank or malformed
+    config value can never match a real user.
+    """
+    digits = "".join(ch for ch in (value or "") if ch.isdigit())
+    if len(digits) < 10:
+        return ""
+    return digits[-10:]
+
+
 def is_owner(user: dict) -> bool:
     """
     The `users` table has no role column, so owner identity comes from
     OWNER_PHONE / OWNER_EMAIL in the environment. Both unset means nobody is
     owner and the owner-only routes stay closed — deliberately fail-closed.
     """
-    owner_phone = (settings.OWNER_PHONE or "").strip()
+    owner_phone = normalize_mobile(settings.OWNER_PHONE)
     owner_email = (settings.OWNER_EMAIL or "").strip().lower()
 
-    if owner_phone and (user.get("mobile") or "").strip() == owner_phone:
+    if owner_phone and normalize_mobile(user.get("mobile")) == owner_phone:
         return True
     if owner_email and (user.get("email") or "").strip().lower() == owner_email:
         return True
