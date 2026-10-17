@@ -20,7 +20,10 @@ async def send_otp_endpoint(
     ip = get_client_ip(request)
     result = await send_otp(body.mobile, ip)
     if not result['success']:
-        raise HTTPException(status_code=400, detail=result['message'])
+        raise HTTPException(
+            status_code=result.get('status', 400),
+            detail=result['message']
+        )
     return result
 
 @router.post("/verify-otp")
@@ -38,7 +41,10 @@ async def verify_otp_endpoint(
         body.location
     )
     if not result['success']:
-        raise HTTPException(status_code=400, detail=result['message'])
+        raise HTTPException(
+            status_code=result.get('status', 400),
+            detail=result['message']
+        )
     return result
 
 @router.post("/google")

@@ -10,7 +10,7 @@ Plus the dependencies handlers use to read the authenticated caller:
   * require_owner    — same, but 403 unless the caller is the business owner
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Request, status
@@ -75,13 +75,27 @@ def invalidate_ip_cache(ip: Optional[str] = None) -> None:
 def _query_ip_blocked(ip: str) -> bool:
     result = (
         db.table("blocked_ips")
-        .select("id")
+        .select("*")
         .eq("ip_address", ip)
         .eq("is_active", True)
-        .limit(1)
         .execute()
     )
-    return bool(result.data)
+    # Filtered in Python rather than in the query so this keeps working before
+    # the expires_at column exists. NULL expires_at means a permanent block.
+    now = datetime.now(timezone.utc)
+    for row in result.data or []:
+        raw = row.get("expires_at")
+        if not raw:
+            return True
+        try:
+            expires = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires > now:
+            return True
+    return False
 
 
 async def is_ip_blocked(ip: str) -> bool:

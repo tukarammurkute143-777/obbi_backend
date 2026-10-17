@@ -6,7 +6,7 @@ from google.oauth2 import id_token as google_id_token
 
 from app.core.config import settings
 from app.core.database import db
-from app.core.middleware import invalidate_ip_cache
+from app.agents.fraud_detection_agent import FraudDetectionAgent
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -22,42 +22,18 @@ def validate_indian_mobile(mobile: str) -> bool:
     pattern = r'^[6-9]\d{9}$'
     return bool(re.match(pattern, mobile))
 
-def check_ip_blocked(ip: str) -> bool:
-    result = db.table('blocked_ips')\
-        .select('id')\
-        .eq('ip_address', ip)\
-        .eq('is_active', True)\
-        .execute()
-    return len(result.data) > 0
+def _fraud_denied(result) -> dict:
+    return {'success': False, 'status': 403, 'message': result.message}
 
-def check_multi_account(ip: str, identifier: str) -> bool:
-    """Check if same IP used with 2+ different accounts"""
-    result = db.table('login_attempts')\
-        .select('email, mobile')\
-        .eq('ip_address', ip)\
-        .eq('success', True)\
-        .execute()
-    
-    identifiers = set()
-    for r in result.data:
-        if r.get('email'):
-            identifiers.add(r['email'])
-        if r.get('mobile'):
-            identifiers.add(r['mobile'])
-    
-    identifiers.add(identifier)
-    return len(identifiers) > 2
-
-def block_ip(ip: str, reason: str):
-    """Block suspicious IP"""
-    db.table('blocked_ips').upsert({
-        'ip_address': ip,
-        'reason': reason,
-        'is_active': True
-    }).execute()
-    # IPBlockMiddleware caches lookups for 60s; drop this IP's entry so the
-    # block applies to the very next request instead of after the TTL.
-    invalidate_ip_cache(ip)
+def _db_write(query, data: dict, flags: dict):
+    """Run an insert/update that records fraud_flags. Falls back to the write
+    without them if the column is missing (migration not yet applied)."""
+    if not flags:
+        return query(data)
+    try:
+        return query({**data, 'fraud_flags': flags})
+    except Exception:
+        return query(data)
 
 async def send_whatsapp_otp(mobile: str, otp: str) -> None:
     """Send the OTP over Twilio WhatsApp. Raises on any failure."""
@@ -79,14 +55,9 @@ async def send_otp(mobile: str, ip: str) -> dict:
     if not validate_indian_mobile(mobile):
         return {'success': False, 'message': 'Valid Indian mobile number daalo'}
     
-    # Check IP blocked
-    if check_ip_blocked(ip):
-        return {'success': False, 'message': 'Access blocked. Contact support.'}
-    
-    # Check multi-account fraud
-    if check_multi_account(ip, mobile):
-        block_ip(ip, 'Multi-account detected')
-        return {'success': False, 'message': 'Suspicious activity detected'}
+    fraud = await FraudDetectionAgent.analyze(ip, mobile)
+    if not fraud.allowed:
+        return _fraud_denied(fraud)
     
     # Generate OTP
     otp = generate_otp()
@@ -99,12 +70,16 @@ async def send_otp(mobile: str, ip: str) -> dict:
     }
     
     # Log attempt
-    db.table('login_attempts').insert({
-        'ip_address': ip,
-        'mobile': mobile,
-        'login_type': 'mobile',
-        'success': False
-    }).execute()
+    _db_write(
+        lambda row: db.table('login_attempts').insert(row).execute(),
+        {
+            'ip_address': ip,
+            'mobile': mobile,
+            'login_type': 'mobile',
+            'success': False
+        },
+        fraud.flags
+    )
     
     try:
         await send_whatsapp_otp(mobile, otp)
@@ -129,6 +104,10 @@ async def verify_otp(
     device_fingerprint: str = None,
     location: str = None
 ) -> dict:
+    fraud = await FraudDetectionAgent.analyze(ip, mobile, device_fingerprint)
+    if not fraud.allowed:
+        return _fraud_denied(fraud)
+
     # Check OTP exists
     stored = otp_store.get(mobile)
     if not stored:
@@ -232,12 +211,9 @@ async def google_auth(
             'message': 'Google login abhi configure nahi hua.'
         }
 
-    if check_ip_blocked(ip):
-        return {
-            'success': False,
-            'status': 403,
-            'message': 'Access blocked. Contact support.'
-        }
+    fraud = await FraudDetectionAgent.analyze(ip, None, device_fingerprint)
+    if not fraud.allowed:
+        return _fraud_denied(fraud)
 
     try:
         claims = verify_google_id_token(token)
@@ -263,13 +239,9 @@ async def google_auth(
             'message': 'Pehle apna Google email verify karo.'
         }
 
-    if check_multi_account(ip, email):
-        block_ip(ip, 'Multi-account detected')
-        return {
-            'success': False,
-            'status': 403,
-            'message': 'Suspicious activity detected'
-        }
+    fraud = await FraudDetectionAgent.analyze(ip, email, device_fingerprint)
+    if not fraud.allowed:
+        return _fraud_denied(fraud)
 
     # Match on email so a mobile-OTP user who later added the same address keeps
     # one account instead of getting a duplicate row.
@@ -305,13 +277,17 @@ async def google_auth(
         db.table('users').update(updates).eq('id', user['id']).execute()
         user = {**user, **updates}
 
-    db.table('login_attempts').insert({
-        'ip_address': ip,
-        'email': email,
-        'login_type': 'google',
-        'success': True,
-        'device_fingerprint': device_fingerprint
-    }).execute()
+    _db_write(
+        lambda row: db.table('login_attempts').insert(row).execute(),
+        {
+            'ip_address': ip,
+            'email': email,
+            'login_type': 'google',
+            'success': True,
+            'device_fingerprint': device_fingerprint
+        },
+        fraud.flags
+    )
 
     token_data = {'sub': str(user['id']), 'email': email}
 
