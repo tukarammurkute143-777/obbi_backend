@@ -71,5 +71,8 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        # A stray key in .env (say, one meant for the frontend) must not stop
+        # the API from starting.
+        extra = "ignore"
 
 settings = Settings()
