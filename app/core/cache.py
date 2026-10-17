@@ -51,8 +51,10 @@ async def cache_get(key: str) -> Optional[Any]:
     if client is not None:
         try:
             raw = await client.get(key)
-            if raw:
-                return json.loads(raw)
+            # Redis answered, so it is the source of truth: a miss means
+            # "deleted or expired", and a stale process-local copy must not
+            # resurrect it (that would defeat cache_delete across workers).
+            return json.loads(raw) if raw else None
         except Exception as e:
             logger.warning("Redis get failed: %s", type(e).__name__)
             _mark_redis_down()
@@ -74,4 +76,15 @@ async def cache_set(key: str, value: Any, ttl: int) -> None:
             await client.set(key, json.dumps(value), ex=ttl)
         except Exception as e:
             logger.warning("Redis set failed: %s", type(e).__name__)
+            _mark_redis_down()
+
+
+async def cache_delete(key: str) -> None:
+    _local.pop(key, None)
+    client = _get_redis()
+    if client is not None:
+        try:
+            await client.delete(key)
+        except Exception as e:
+            logger.warning("Redis delete failed: %s", type(e).__name__)
             _mark_redis_down()

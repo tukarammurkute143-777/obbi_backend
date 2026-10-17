@@ -10,7 +10,24 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_EXPIRE_DAYS: int = 7
     OPENAI_API_KEY: str = ""
-    OPENAI_MODEL: str = "gpt-4o"
+
+    # AI provider. These are the *fallback* values: the active model is read
+    # from the Supabase `ai_models` table at runtime, and keys saved through
+    # the dashboard (`api_keys_config`) take precedence over these.
+    # AI_PROVIDER: openai | groq | gemini | anthropic
+    AI_PROVIDER: str = "openai"
+    AI_MODEL: str = "gpt-4o"
+    AI_API_KEY: str = ""
+    AI_TEMPERATURE: float = 0.3
+    AI_MAX_TOKENS: int = 4000
+    # Per-provider keys, used when the active model's provider differs from
+    # AI_PROVIDER (OPENAI_API_KEY above is the openai one).
+    GROQ_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
+    ANTHROPIC_API_KEY: str = ""
+    # Encrypts keys stored in `api_keys_config`. Falls back to JWT_SECRET_KEY;
+    # set it separately so rotating JWTs does not orphan the stored keys.
+    KEY_ENCRYPTION_SECRET: str = ""
     GOOGLE_MAPS_API_KEY: str = ""
     TAVILY_API_KEY: str = ""
     REDIS_URL: str = "redis://localhost:6379"

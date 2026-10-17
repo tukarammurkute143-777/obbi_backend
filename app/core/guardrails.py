@@ -31,7 +31,7 @@ TEXT_FIELDS = frozenset({
 # well over 500 characters.
 SKIP_FIELDS = frozenset({
     "token", "id_token", "access_token", "refresh_token", "otp", "password",
-    "device_fingerprint",
+    "device_fingerprint", "key_value",
 })
 
 INVALID_INPUT = "Invalid input detected"

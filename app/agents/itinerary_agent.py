@@ -2,7 +2,7 @@
 Itinerary Agent: day-by-day trip plans grounded in real route and hotel data.
 
 Flow: sanitize -> strict validation -> route data (RouteAgent) -> hotel list
-(HotelAgent) -> GPT-4o with a step-by-step prompt -> strict output checks ->
+(HotelAgent) -> the configured AI model (see ai_client) with a step-by-step prompt -> strict output checks ->
 cache. The model is only allowed to use the distance/time and hotels we pass
 in; its reply is rejected (and retried once) if it breaks those rules.
 
@@ -18,10 +18,8 @@ import logging
 import re
 from typing import Any, Optional
 
-from openai import AsyncOpenAI, OpenAIError
-
 from app.core.cache import cache_get, cache_set
-from app.core.config import settings
+from app.core.ai_client import AIClientError, ai_client
 from app.core.guardrails import (
     GuardrailError,
     input_guardrails,
@@ -33,7 +31,6 @@ logger = logging.getLogger("itinerary_agent")
 CACHE_TTL = 2 * 3600
 MIN_CONFIDENCE = 0.75
 MAX_ATTEMPTS = 2  # first try + one retry
-TEMPERATURE = 0.3
 
 BUDGETS = ("budget", "mid", "premium")
 TRIP_TYPES = ("pilgrimage", "family", "adventure", "business", "leisure")
@@ -114,7 +111,6 @@ class ItineraryAgent:
     def __init__(self, route_agent, hotel_agent) -> None:
         self.route_agent = route_agent
         self.hotel_agent = hotel_agent
-        self._client: Optional[AsyncOpenAI] = None
 
     # ---------------------------------------------------------- public API
 
@@ -315,36 +311,19 @@ Return ONLY valid JSON:
 
     # ----------------------------------------------------------------- LLM
 
-    def _openai(self) -> Optional[AsyncOpenAI]:
-        if self._client is None:
-            if not settings.OPENAI_API_KEY.strip():
-                return None
-            self._client = AsyncOpenAI(
-                api_key=settings.OPENAI_API_KEY, max_retries=0)
-        return self._client
-
     async def _call_llm(self, system: str, user: str, days: int):
         """(reply_text, None) | (None, 'retry') | (None, 'fatal')."""
-        client = self._openai()
-        if client is None:
-            logger.error("OPENAI_API_KEY is not set")
-            return None, "fatal"
         try:
-            resp = await client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
-                temperature=TEMPERATURE,
-                messages=[{"role": "system", "content": system},
-                          {"role": "user", "content": user}],
-                response_format={"type": "json_object"},
-                max_tokens=min(16000, 800 + 450 * days),
+            text = await ai_client.generate(
+                user, system,
+                json_mode=True,
+                max_tokens=800 + 450 * days,  # raises the AI_MAX_TOKENS floor
                 timeout=30 + 4 * days,
             )
-        except OpenAIError as e:
-            logger.error("OpenAI call failed: %s", type(e).__name__)
-            # Bad key / no quota will not fix itself on a second try.
-            fatal = type(e).__name__ in ("AuthenticationError", "PermissionDeniedError")
-            return None, "fatal" if fatal else "retry"
-        text = resp.choices[0].message.content if resp.choices else None
+        except AIClientError as e:
+            logger.error("AI call failed: %s", e)
+            # Bad key / unsupported provider will not fix itself on a retry.
+            return None, "fatal" if e.fatal else "retry"
         return text, None
 
     # ----------------------------------------------------------- output checks
