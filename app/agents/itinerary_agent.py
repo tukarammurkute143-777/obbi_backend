@@ -179,6 +179,9 @@ class ItineraryAgent:
                 "distance_km": route.get("distance_km"),
                 "duration_text": route.get("duration_text"),
             },
+            # The validated request, so callers can store what was asked for.
+            "trip": {k: data[k] for k in
+                     ("from", "to", "days", "people", "budget", "trip_type")},
         }
         await cache_set(key, result, CACHE_TTL)
         return {**result, "cached": False}

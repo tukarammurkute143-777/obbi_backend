@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     TAVILY_API_KEY: str = ""
     REDIS_URL: str = "redis://localhost:6379"
     RESEND_API_KEY: str = ""
+    # The sending domain must be verified in Resend or every send is rejected.
+    EMAIL_FROM: str = "Obii Cabs <info@obiicabs.com>"
     APP_ENV: str = "development"
     FRONTEND_URL: str = "http://localhost:3000"
     OWNER_PHONE: str = ""
@@ -62,6 +64,8 @@ class Settings(BaseSettings):
     RATE_LIMIT_USER_HOUR: str = "100/hour"
     # LLM-backed endpoints (each call costs real money).
     RATE_LIMIT_AI: str = "10/hour"
+    # Emails sent on a customer's request (to any address they type in).
+    RATE_LIMIT_EMAIL: str = "5/hour"
 
     class Config:
         env_file = ".env"

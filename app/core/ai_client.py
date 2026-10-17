@@ -303,11 +303,13 @@ class AIClient:
         json_mode: bool = False,
         max_tokens: Optional[int] = None,
         timeout: float = DEFAULT_TIMEOUT,
+        temperature: Optional[float] = None,
     ) -> str:
         """
         One completion from whichever model is active right now.
         max_tokens raises (never lowers) the AI_MAX_TOKENS floor, then is
-        capped at the provider's own output limit.
+        capped at the provider's own output limit. temperature overrides
+        AI_TEMPERATURE for this call.
         """
         active = await get_active_model()
         provider = get_provider(active["provider"])  # raises if unsupported
@@ -323,7 +325,7 @@ class AIClient:
             system_prompt=system_prompt,
             model=active["model_name"],
             api_key=api_key,
-            temperature=settings.AI_TEMPERATURE,
+            temperature=settings.AI_TEMPERATURE if temperature is None else temperature,
             max_tokens=max(settings.AI_MAX_TOKENS, max_tokens or 0),
             json_mode=json_mode,
             timeout=timeout,

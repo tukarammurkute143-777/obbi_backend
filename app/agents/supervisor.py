@@ -14,6 +14,7 @@ from app.agents.fraud_detection_agent import FraudDetectionAgent, FraudResult
 from app.agents.hotel_agent import HotelAgent
 from app.agents.itinerary_agent import ItineraryAgent
 from app.agents.route_agent import RouteAgent
+from app.services import email_service, itinerary_service
 
 logger = logging.getLogger("supervisor")
 
@@ -58,14 +59,89 @@ class Supervisor:
     async def itinerary(self, input_data: dict) -> dict:
         return await self._safe(self.itinerary_agent.generate, "itinerary", input_data)
 
-    async def email(self, *args, **kwargs) -> dict:
-        """Draft with the writer, then pass the draft to the reviewer."""
-        draft = await self._safe(self.email_writer_agent.run, "email_writer",
-                                 *args, **kwargs)
+    async def email(self, input_data: dict, itinerary_id: str = None) -> dict:
+        """
+        Write -> review -> send or queue.
+
+          {'success': True, 'status': 'sent'}                      reviewer passed it
+          {'success': True, 'status': 'queued', 'queue_id': ...}   owner must approve
+          {'success': True, 'status': 'already_sent'}              one email/day cap
+          {'success': False, 'status': <http>, 'message': ...}
+
+        itinerary_id (optional) attaches that itinerary's PDF and marks it
+        emailed once the email actually goes out.
+        """
+        try:
+            return await self._email(input_data, itinerary_id)
+        except Exception as e:
+            logger.exception("Email pipeline crashed: %s", type(e).__name__)
+            return {"success": False, "status": 500,
+                    "message": "Kuch galat ho gaya. Dobara try karo."}
+
+    async def _email(self, input_data: dict, itinerary_id) -> dict:
+        if not isinstance(input_data, dict):
+            return {"success": False, "status": 400,
+                    "message": "Input must be a JSON object."}
+        data = dict(input_data)
+        to_email = str(data.get("customer_email") or "").strip().lower()
+
+        # Cheapest check first: don't pay for a draft that cannot be sent.
+        if to_email and await email_service.already_sent_today(to_email):
+            return {"success": True, "status": "already_sent"}
+
+        if itinerary_id:
+            row = await itinerary_service.get_itinerary(itinerary_id)
+            if not row:
+                return {"success": False, "status": 404,
+                        "message": "Itinerary nahi mili."}
+            data["itinerary_pdf_path"] = await itinerary_service.ensure_pdf(row)
+            data.setdefault("destination", row.get("to_city") or "")
+            summary = (row.get("itinerary_data") or {}).get("summary")
+            if summary:
+                data.setdefault("itinerary_summary", summary)
+
+        draft = await self._safe(self.email_writer_agent.run, "email_writer", data)
         if not draft.get("success"):
             return draft
-        return await self._safe(self.email_reviewer_agent.run, "email_reviewer",
-                                draft)
+
+        review = await self._safe(
+            self.email_reviewer_agent.review, "email_reviewer",
+            {"subject": draft["subject"], "body": draft["body"]}, data)
+        if "decision" not in review:
+            return review
+
+        if review["decision"] == "send":
+            result = await email_service.send_email(
+                to_email, draft["subject"], draft["body"],
+                email_type=data.get("email_type", ""),
+                attachment_path=draft["attachment_path"])
+            if result["success"]:
+                if itinerary_id and draft["has_attachment"]:
+                    await itinerary_service.update_itinerary(itinerary_id, emailed=True)
+                return {"success": True, "status": "sent",
+                        "overall_score": review["overall_score"]}
+            if result["status"] == "already_sent":
+                return {"success": True, "status": "already_sent"}
+            return {"success": False, "status": 502, "message": result["message"]}
+
+        try:
+            queued = await email_service.enqueue_for_review(
+                customer_email=to_email,
+                customer_name=data.get("customer_name"),
+                email_type=data.get("email_type"),
+                subject=draft["subject"],
+                body=draft["body"],
+                attachment_path=draft["attachment_path"],
+                overall_score=review["overall_score"],
+                failed_checks=review["failed_checks"],
+                itinerary_id=itinerary_id,
+            )
+        except email_service.QueueError as e:
+            # Not stored means nobody will ever review it: do NOT send.
+            return {"success": False, "status": e.status, "message": e.message}
+        return {"success": True, "status": "queued", "queue_id": queued.get("id"),
+                "overall_score": review["overall_score"],
+                "failed_checks": review["failed_checks"]}
 
     async def blog(self, *args, **kwargs) -> dict:
         return await self._safe(self.blog_writer_agent.run, "blog_writer",

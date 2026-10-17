@@ -32,6 +32,8 @@ TEXT_FIELDS = frozenset({
 SKIP_FIELDS = frozenset({
     "token", "id_token", "access_token", "refresh_token", "otp", "password",
     "device_fingerprint", "key_value",
+    # Validated as addresses downstream; encoding would break "o'brien@x.com".
+    "email", "customer_email",
 })
 
 INVALID_INPUT = "Invalid input detected"
@@ -187,6 +189,12 @@ class OutputGuardrails:
 
     def has_pricing(self, text: str) -> bool:
         return bool(_PRICING.search(text))
+
+    def has_competitor(self, text: str) -> bool:
+        return bool(_COMPETITORS.search(text))
+
+    def has_offensive(self, text: str) -> bool:
+        return bool(_OFFENSIVE.search(text))
 
     def check_content(self, text: str) -> str:
         """The text, or a safe fallback if it names a competitor, quotes a

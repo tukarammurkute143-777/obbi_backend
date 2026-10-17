@@ -1,10 +1,19 @@
+import html
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 
 from app.core.ai_client import invalidate_active_model, invalidate_keys
 from app.core.middleware import require_owner
 from app.models.ai_admin import AddModelRequest, UpdateKeyRequest
-from app.services import ai_admin_service, dashboard_service
+from app.models.email import EditQueuedEmailRequest
+from app.services import (
+    ai_admin_service,
+    dashboard_service,
+    email_service,
+    itinerary_pdf_service,
+    itinerary_service,
+)
 from app.services.ai_admin_service import AdminError
 
 # Every route here is owner-only — it exposes revenue, customer phone numbers
@@ -104,3 +113,67 @@ async def delete_ai_model(request: Request, model_id: str):
     result = await _admin(ai_admin_service.delete_model, model_id)
     await invalidate_active_model()
     return result
+
+
+# ------------------------------------------------ Email review queue (owner only)
+
+
+async def _queue_attachment(item: dict):
+    """Path of the PDF to send with a queued email, re-creating it from the
+    saved itinerary if the cached file is gone. Refuses (409) rather than let
+    an email that says 'PDF attached' go out without one."""
+    if itinerary_pdf_service.is_managed_pdf(item.get("attachment_path")):
+        return item["attachment_path"]
+    if item.get("itinerary_id"):
+        row = await itinerary_service.get_itinerary(item["itinerary_id"])
+        if row:
+            return await itinerary_service.ensure_pdf(row)
+    raise email_service.QueueError(
+        409, "Attachment dobara nahi ban paya. Is email ko reject karke naya banao.")
+
+
+async def _resolve(item_id: str, action: str, subject=None, body=None):
+    if not itinerary_service.is_valid_id(item_id):
+        raise HTTPException(status_code=404, detail="Email nahi mila.")
+    try:
+        result = await email_service.resolve_item(
+            item_id, action, subject, body, attachment_resolver=_queue_attachment)
+    except email_service.QueueError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    except LookupError:
+        raise HTTPException(status_code=503, detail="Database abhi available nahi hai.")
+    if result.get("itinerary_id") and action != "rejected":
+        await itinerary_service.update_itinerary(result["itinerary_id"], emailed=True)
+    return {k: v for k, v in result.items() if k != "itinerary_id"}
+
+
+@router.get("/email-queue")
+async def email_queue(request: Request):
+    """Emails the reviewer held back, newest first."""
+    try:
+        items = await email_service.list_pending()
+    except email_service.QueueError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {"total": len(items), "emails": items}
+
+
+@router.put("/email-queue/{item_id}/approve")
+async def approve_queued_email(request: Request, item_id: str):
+    """Send the email as written."""
+    return await _resolve(item_id, "approved")
+
+
+@router.put("/email-queue/{item_id}/reject")
+async def reject_queued_email(request: Request, item_id: str):
+    """Discard the email without sending."""
+    return await _resolve(item_id, "rejected")
+
+
+@router.put("/email-queue/{item_id}/edit")
+async def edit_queued_email(request: Request, item_id: str, body: EditQueuedEmailRequest):
+    """Send the email with the owner's corrected subject and body."""
+    # The guardrails middleware HTML-encodes request text; the email renderer
+    # escapes on its own, so undo that here or apostrophes show as &#x27;.
+    return await _resolve(item_id, "edited_and_sent",
+                          email_service.one_line(html.unescape(body.subject)),
+                          html.unescape(body.body))
