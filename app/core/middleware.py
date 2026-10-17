@@ -44,7 +44,8 @@ PUBLIC_PATHS = {
     "/openapi.json",
     "/favicon.ico",
 }
-PUBLIC_PREFIXES = ("/api/auth",)
+# /api/blogs is public so search engines can read published posts.
+PUBLIC_PREFIXES = ("/api/auth", "/api/blogs")
 
 
 def is_public_path(path: str) -> bool:
@@ -316,6 +317,15 @@ GUARDRAIL_SKIP_PATHS = {"/health", "/docs", "/docs/oauth2-redirect", "/redoc",
 AI_PATH_PREFIXES = ("/api/safar/itinerary",)
 MAX_BODY_BYTES = 100_000
 
+# Owner-only endpoints whose JSON body carries a whole article. `content` there
+# gets its own (much larger) length limit and is exempt from the injection scan
+# and entity-encoding, which would reject or corrupt ordinary prose ("select a
+# hotel from the list", apostrophes). It is HTML-stripped when saved.
+RICH_TEXT_PATHS = ("/api/dashboard/blogs",)
+RICH_TEXT_FIELD = "content"
+RICH_TEXT_MAX_CHARS = 60_000
+RICH_TEXT_MAX_BODY_BYTES = 250_000
+
 
 def _reject(status_code: int, detail: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"detail": detail})
@@ -394,13 +404,15 @@ class GuardrailsMiddleware:
 
     async def _check_body(self, scope, receive):
         """(body to forward | None, rejection | None)"""
+        rich = scope.get("path", "").startswith(RICH_TEXT_PATHS)
+        limit = RICH_TEXT_MAX_BODY_BYTES if rich else MAX_BODY_BYTES
         chunks, size = [], 0
         while True:
             message = await receive()
             if message["type"] != "http.request":
                 break
             size += len(message.get("body", b""))
-            if size > MAX_BODY_BYTES:
+            if size > limit:
                 return None, _reject(413, "Request body too large")
             chunks.append(message.get("body", b""))
             if not message.get("more_body"):
@@ -414,11 +426,21 @@ class GuardrailsMiddleware:
         except ValueError:
             return raw, None  # let FastAPI return its own 422
 
+        article = None
+        if rich and isinstance(data, dict) and isinstance(data.get(RICH_TEXT_FIELD), str):
+            article = data.pop(RICH_TEXT_FIELD)
+            if len(article) > RICH_TEXT_MAX_CHARS:
+                return None, _reject(
+                    400, f"'{RICH_TEXT_FIELD}' is too long (max {RICH_TEXT_MAX_CHARS} characters)")
+
         bad = self._violation(data)
         if bad:
             return None, bad
 
-        body = json.dumps(input_guardrails.sanitize(data)).encode()
+        data = input_guardrails.sanitize(data)
+        if article is not None:
+            data[RICH_TEXT_FIELD] = article
+        body = json.dumps(data).encode()
         scope["headers"] = [
             (k, str(len(body)).encode() if k == b"content-length" else v)
             for k, v in scope["headers"]

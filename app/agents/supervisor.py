@@ -143,9 +143,10 @@ class Supervisor:
                 "overall_score": review["overall_score"],
                 "failed_checks": review["failed_checks"]}
 
-    async def blog(self, *args, **kwargs) -> dict:
-        return await self._safe(self.blog_writer_agent.run, "blog_writer",
-                                *args, **kwargs)
+    async def blog(self, input_data: dict) -> dict:
+        """Write a blog and save it as a DRAFT. Never publishes."""
+        return await self._safe(
+            self.blog_writer_agent.generate, "blog_writer", input_data)
 
     async def fraud_check(self, ip: str, identifier: str = None,
                           device_fingerprint: str = None) -> FraudResult:

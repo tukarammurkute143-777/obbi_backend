@@ -1,14 +1,20 @@
 import html
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 
+from app.agents.supervisor import supervisor
 from app.core.ai_client import invalidate_active_model, invalidate_keys
+from app.core.config import settings
 from app.core.middleware import require_owner
+from app.core.rate_limit import limiter
 from app.models.ai_admin import AddModelRequest, UpdateKeyRequest
+from app.models.blog import UpdateBlogRequest
 from app.models.email import EditQueuedEmailRequest
 from app.services import (
     ai_admin_service,
+    blog_service,
     dashboard_service,
     email_service,
     itinerary_pdf_service,
@@ -177,3 +183,78 @@ async def edit_queued_email(request: Request, item_id: str, body: EditQueuedEmai
     return await _resolve(item_id, "edited_and_sent",
                           email_service.one_line(html.unescape(body.subject)),
                           html.unescape(body.body))
+
+
+# ------------------------------------------------------ Blogs (owner only)
+# Publishing happens ONLY through PUT /blogs/{id}/publish. Generating a blog
+# always saves a draft.
+
+
+async def _blog(fn, *args):
+    try:
+        return await fn(*args)
+    except blog_service.BlogError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+
+
+@router.post("/blogs/generate", status_code=201)
+@limiter.limit(settings.RATE_LIMIT_AI)
+async def generate_blog(request: Request, body: dict = Body(...)):
+    """Write a blog with the AI and save it as a draft for review."""
+    result = await supervisor.blog(body)
+    if not result["success"]:
+        status = result.get("status", 503)
+        if status == 400:
+            raise HTTPException(
+                status_code=400,
+                detail={"field": result.get("field"), "message": result["message"]})
+        raise HTTPException(status_code=status, detail=result["message"])
+    return result
+
+
+@router.get("/blogs")
+async def list_blogs(
+    request: Request,
+    status: Optional[str] = Query(None, description="draft | published | rejected"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=10000),
+):
+    """Blogs without their body, plus per-status counts (counts.draft = waiting
+    for your review)."""
+    return await _blog(blog_service.list_blogs, status, limit, offset)
+
+
+@router.get("/blogs/{blog_id}")
+async def get_blog(request: Request, blog_id: str):
+    return await _blog(blog_service.get_blog, blog_id)
+
+
+@router.put("/blogs/{blog_id}/publish")
+async def publish_blog(request: Request, blog_id: str):
+    """Make a blog public. The only way to publish."""
+    row = await _blog(blog_service.publish_blog, blog_id)
+    return {"success": True, "id": row["id"], "slug": row["slug"],
+            "status": row["status"], "published_at": row["published_at"]}
+
+
+@router.put("/blogs/{blog_id}/reject")
+async def reject_blog(request: Request, blog_id: str):
+    """Reject a draft, or take a published blog down."""
+    row = await _blog(blog_service.reject_blog, blog_id)
+    return {"success": True, "id": row["id"], "status": row["status"]}
+
+
+@router.put("/blogs/{blog_id}")
+async def edit_blog(request: Request, blog_id: str, body: UpdateBlogRequest):
+    """Edit title and/or content. Does not change the blog status."""
+    # The guardrails middleware HTML-encodes the title; undo it for storage.
+    title = html.unescape(body.title) if body.title is not None else None
+    row = await _blog(blog_service.update_blog, blog_id, title, body.content)
+    return {"success": True, "blog": row}
+
+
+@router.delete("/blogs/{blog_id}")
+async def delete_blog(request: Request, blog_id: str):
+    """Delete a draft or rejected blog. Published blogs cannot be deleted."""
+    await _blog(blog_service.delete_blog, blog_id)
+    return {"success": True}
