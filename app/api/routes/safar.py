@@ -217,7 +217,7 @@ async def get_session(
         "booking_confirmed": s["booking_confirmed"],
         "messages": s["messages"],
         "context": {k: v for k, v in (s.get("context") or {}).items()
-                    if k not in ("awaiting", "pending_intent")},
+                    if k not in ("awaiting", "pending_intent", "memory", "topics")},
         "last_intent": s.get("last_intent"),
     }
 
@@ -228,7 +228,17 @@ async def delete_session(
     session_id: str,
     user: dict = Depends(get_current_user),
 ):
-    """Clear a conversation: its history is deleted."""
+    """End a conversation. A one-line summary goes into Safar's memory of you
+    (so it can pick up next time); the messages themselves are deleted."""
     s = await _own_session(session_id, user)
-    await chat_session_service.clear(s)
+    await supervisor.end_chat(s, user)
+    return {"success": True}
+
+
+@router.delete("/memory")
+async def forget_me(request: Request, user: dict = Depends(get_current_user)):
+    """Erase everything Safar remembers about you: past trips, preferences,
+    inquiry history and saved conversations."""
+    if not await supervisor.forget_user(user):
+        raise HTTPException(status_code=503, detail="Abhi delete nahi ho paya. Try again.")
     return {"success": True}

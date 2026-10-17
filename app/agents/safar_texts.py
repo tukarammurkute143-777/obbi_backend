@@ -15,22 +15,34 @@ LANGS = ("en", "hi", "hi_dev", "mr")
 
 T: dict[str, dict[str, str]] = {
     "greeting": {
-        "en": "Hello! I'm Safar, the travel assistant of Obii Cabs 🙏 Ask me about routes, vehicles or trip planning. How can I help?",
-        "hi": "Namaste! Main Safar hu, Obii Cabs ka travel assistant 🙏 Route, vehicle ya trip planning ke baare mein puchiye. Main kaise madad kar sakta hu?",
-        "hi_dev": "नमस्ते! मैं Safar हूँ, Obii Cabs का ट्रैवल असिस्टेंट 🙏 रूट, गाड़ी या ट्रिप प्लानिंग के बारे में पूछिए। मैं कैसे मदद कर सकता हूँ?",
-        "mr": "नमस्ते! मी Safar आहे, Obii Cabs चा ट्रॅव्हल असिस्टंट 🙏 रूट, गाडी किंवा ट्रिप प्लॅनिंगबद्दल विचारा. मी कशी मदत करू?",
+        "en": "Hello! I'm Safar, the AI travel assistant of Obii Cabs! 🙏\nWhere would you like to go today? 🚗",
+        "hi": "Namaste! Main Safar hu — Obii Cabs ka AI travel assistant! 🙏\nKahan jaana hai aaj? 🚗",
+        "hi_dev": "नमस्ते! मैं Safar हूँ — Obii Cabs का AI ट्रैवल असिस्टेंट! 🙏\nआज कहाँ जाना है? 🚗",
+        "mr": "नमस्ते! मी Safar आहे — Obii Cabs चा AI ट्रॅव्हल असिस्टंट! 🙏\nआज कुठे जायचे आहे? 🚗",
     },
-    "greeting_named": {
-        "en": "Hello {name}! I'm Safar, the travel assistant of Obii Cabs 🙏 How can I help you today?",
-        "hi": "Namaste {name}! Main Safar hu, Obii Cabs ka travel assistant 🙏 Aaj main aapki kaise madad kar sakta hu?",
-        "hi_dev": "नमस्ते {name}! मैं Safar हूँ, Obii Cabs का ट्रैवल असिस्टेंट 🙏 आज मैं आपकी कैसे मदद कर सकता हूँ?",
-        "mr": "नमस्ते {name}! मी Safar आहे, Obii Cabs चा ट्रॅव्हल असिस्टंट 🙏 आज मी तुम्हाला कशी मदत करू?",
+    "greeting_back": {
+        "en": "Welcome back{name}! 😊\nLast time you asked about {topic}. Did you book, or is it a new trip?",
+        "hi": "Welcome back{name}! 😊\nLast time aapne {topic} ke baare mein puchha tha. Kya aapne booking ki? Ya koi nayi trip?",
+        "hi_dev": "Welcome back{name}! 😊\nपिछली बार आपने {topic} के बारे में पूछा था। क्या आपने बुकिंग की? या कोई नई ट्रिप?",
+        "mr": "Welcome back{name}! 😊\nमागच्या वेळी तुम्ही {topic} बद्दल विचारले होते. तुम्ही बुकिंग केली का? की नवीन ट्रिप?",
     },
-    "greeting_returning": {
-        "en": " Last time you were asking about {from_city} to {to_city}. Shall we continue with that trip?",
-        "hi": " Pichli baar aap {from_city} se {to_city} ke baare mein pooch rahe the. Kya us trip par aage badhein?",
-        "hi_dev": " पिछली बार आप {from_city} से {to_city} के बारे में पूछ रहे थे। क्या उस ट्रिप पर आगे बढ़ें?",
-        "mr": " मागच्या वेळी तुम्ही {from_city} ते {to_city} बद्दल विचारत होता. त्या ट्रिपबद्दल पुढे जाऊया का?",
+    "greeting_back_booked": {
+        "en": "Welcome back{name}! 🙏\nHow was your {dest} trip?\nPlanning a new trip? 😊",
+        "hi": "Welcome back{name}! 🙏\nAapki {dest} trip kaisi rahi?\nKoi nayi trip plan karni hai? 😊",
+        "hi_dev": "Welcome back{name}! 🙏\nआपकी {dest} ट्रिप कैसी रही?\nकोई नई ट्रिप प्लान करनी है? 😊",
+        "mr": "Welcome back{name}! 🙏\nतुमची {dest} ट्रिप कशी झाली?\nनवीन ट्रिप प्लॅन करायची आहे का? 😊",
+    },
+    "topic_generic": {
+        "en": "a trip", "hi": "ek trip", "hi_dev": "एक ट्रिप", "mr": "एका ट्रिप",
+    },
+    "dest_generic": {
+        "en": "last", "hi": "pichli", "hi_dev": "पिछली", "mr": "मागची",
+    },
+    "itinerary_limit": {
+        "en": "You've reached the hourly limit for trip plans. Please try again a little later, or call us: 📞 {phone}",
+        "hi": "Ek ghante mein itne plans ki limit poori ho gayi. Thodi der baad try karein ya call karein: 📞 {phone}",
+        "hi_dev": "एक घंटे में प्लान बनाने की सीमा पूरी हो गई। थोड़ी देर बाद कोशिश करें या कॉल करें: 📞 {phone}",
+        "mr": "एका तासातील प्लॅनची मर्यादा पूर्ण झाली. थोड्या वेळाने प्रयत्न करा किंवा कॉल करा: 📞 {phone}",
     },
     "pricing": {
         "en": "For rates, please call us: 📞 {phone}",

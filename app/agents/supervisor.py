@@ -273,6 +273,13 @@ class Supervisor:
         else's session id; everything else comes back as a reply."""
         return await self.avatar_agent.chat(message, user, session_id, language)
 
+    async def end_chat(self, session: dict, user: dict) -> None:
+        """End a conversation: summarise it into memory, then clear it."""
+        await self.avatar_agent.end_session(session, user)
+
+    async def forget_user(self, user: dict) -> bool:
+        return await self.avatar_agent.forget_user(user)
+
     async def fraud_check(self, ip: str, identifier: str = None,
                           device_fingerprint: str = None) -> FraudResult:
         return await self.fraud_agent.analyze(ip, identifier, device_fingerprint)

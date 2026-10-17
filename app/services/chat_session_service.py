@@ -151,25 +151,3 @@ async def clear(session: dict) -> None:
         await asyncio.to_thread(_delete_row, sid)
     except Exception as e:
         logger.warning("Deleting saved chat session failed: %s", type(e).__name__)
-
-
-# ------------------------------------------------------------------ history
-
-
-def _last_trip(user_id: str, exclude: str) -> Optional[dict]:
-    rows = (db.table("chat_sessions").select("session_id,context").eq("user_id", user_id)
-            .order("updated_at", desc=True).limit(5).execute().data or [])
-    for r in rows:
-        ctx = r.get("context") or {}
-        if r["session_id"] != exclude and ctx.get("from_city") and ctx.get("to_city"):
-            return {"from_city": ctx["from_city"], "to_city": ctx["to_city"]}
-    return None
-
-
-async def last_trip(user_id: str, exclude_session: str) -> Optional[dict]:
-    """The route this user last talked about in an earlier session, if any."""
-    try:
-        return await asyncio.to_thread(_last_trip, str(user_id), exclude_session)
-    except Exception as e:
-        logger.warning("Looking up last trip failed: %s", type(e).__name__)
-        return None
