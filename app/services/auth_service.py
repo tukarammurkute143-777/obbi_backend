@@ -1,7 +1,8 @@
 import asyncio
+import logging
 
+import httpx
 from google.auth.transport import requests as google_requests
-from twilio.rest import Client as TwilioClient
 from google.oauth2 import id_token as google_id_token
 
 from app.core.config import settings
@@ -35,25 +36,46 @@ def _db_write(query, data: dict, flags: dict):
     except Exception:
         return query(data)
 
-_E164 = re.compile(r'^\+[1-9]\d{7,14}$')
+FAST2SMS_URL = "https://www.fast2sms.com/dev/bulkV2"
 
 
 async def send_sms_otp(mobile: str, otp: str) -> None:
-    """Send the OTP as an SMS through Twilio. Raises on any failure."""
-    sender = settings.TWILIO_PHONE_NUMBER.strip()
-    if not (settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN
-            and _E164.match(sender)):
-        # Also catches the "+1XXXXXXXXXX" placeholder, which is not a number.
-        raise RuntimeError('Twilio SMS is not configured')
+    """
+    Send the OTP as an SMS through Fast2SMS ("q" quick route). Raises on any
+    failure. `mobile` is the bare 10-digit number, already validated.
 
-    client = TwilioClient(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-    # The Twilio SDK is blocking; keep it off the event loop.
-    await asyncio.to_thread(
-        client.messages.create,
-        from_=sender,
-        to=f'+91{mobile}',
-        body=f'Your Obii Cabs OTP is: {otp}. Valid 5 minutes.'
-    )
+    Fast2SMS answers HTTP 200 with {"return": false, ...} for a bad key or an
+    empty wallet, so the body has to be checked, not just the status code.
+    """
+    api_key = settings.FAST2SMS_API_KEY.strip()
+    if not api_key:
+        raise RuntimeError('Fast2SMS is not configured')
+
+    # The OTP travels in the query string, and httpx logs every request URL at
+    # INFO. Keep it out of our logs.
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            FAST2SMS_URL,
+            headers={'authorization': api_key},
+            params={
+                'route': 'q',
+                'numbers': mobile,
+                'message': f'Your Obii Cabs OTP is {otp}. Valid 5 minutes. '
+                           'Do not share with anyone.',
+            },
+        )
+    try:
+        data = resp.json()
+    except ValueError:
+        raise RuntimeError(f'Fast2SMS returned a non-JSON reply (HTTP {resp.status_code})')
+    if resp.status_code != 200 or data.get('return') is not True:
+        # status_code/message from Fast2SMS (e.g. 412 invalid key) - never the OTP.
+        raise RuntimeError(
+            f"Fast2SMS rejected the SMS: {data.get('status_code', resp.status_code)} "
+            f"{str(data.get('message'))[:120]}")
+
 
 async def send_otp(mobile: str, ip: str) -> dict:
     # Validate mobile
