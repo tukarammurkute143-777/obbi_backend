@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     JWT_REFRESH_EXPIRE_DAYS: int = 7
     OPENAI_API_KEY: str = ""
     GOOGLE_MAPS_API_KEY: str = ""
+    TAVILY_API_KEY: str = ""
     REDIS_URL: str = "redis://localhost:6379"
     RESEND_API_KEY: str = ""
     APP_ENV: str = "development"

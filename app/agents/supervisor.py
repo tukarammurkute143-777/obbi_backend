@@ -36,8 +36,24 @@ class Supervisor:
             return await self.route_agent.get_multiple_routes(origin, destination)
         return await self.route_agent.get_distance_and_time(origin, destination)
 
-    async def hotel(self, *args, **kwargs) -> dict:
-        return await self._safe(self.hotel_agent.run, "hotel", *args, **kwargs)
+    async def hotel(
+        self,
+        destination: str,
+        type: str = "all",
+        check_in: str = None,
+        check_out: str = None,
+        guests: int = 1,
+    ) -> dict:
+        """type: 'all' (near attractions), 'budget' or 'premium'."""
+        if type == "budget":
+            return await self._safe(
+                self.hotel_agent.get_budget_hotels, "hotel", destination)
+        if type == "premium":
+            return await self._safe(
+                self.hotel_agent.get_premium_hotels, "hotel", destination)
+        return await self._safe(
+            self.hotel_agent.search_hotels, "hotel",
+            destination, check_in, check_out, guests)
 
     async def itinerary(self, *args, **kwargs) -> dict:
         return await self._safe(self.itinerary_agent.run, "itinerary", *args, **kwargs)
