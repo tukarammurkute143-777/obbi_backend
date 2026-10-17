@@ -39,11 +39,12 @@ class Settings(BaseSettings):
     OWNER_PHONE: str = ""
     OWNER_EMAIL: str = ""
 
-    # Twilio WhatsApp OTP delivery. TWILIO_WHATSAPP_FROM is the sender in
-    # Twilio's format, e.g. "whatsapp:+14155238886" (sandbox number).
+    # Twilio SMS OTP delivery. TWILIO_PHONE_NUMBER is the number the SMS is sent
+    # from, in E.164 form (e.g. +14155550123): Twilio Console -> Phone Numbers ->
+    # Manage -> Active Numbers.
     TWILIO_ACCOUNT_SID: str = ""
     TWILIO_AUTH_TOKEN: str = ""
-    TWILIO_WHATSAPP_FROM: str = ""
+    TWILIO_PHONE_NUMBER: str = ""
 
     # OAuth client ID from Google Cloud Console. REQUIRED for /api/auth/google:
     # google-auth only verifies a token's audience when one is supplied, so

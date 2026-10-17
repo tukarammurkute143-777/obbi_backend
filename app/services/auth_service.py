@@ -35,19 +35,24 @@ def _db_write(query, data: dict, flags: dict):
     except Exception:
         return query(data)
 
-async def send_whatsapp_otp(mobile: str, otp: str) -> None:
-    """Send the OTP over Twilio WhatsApp. Raises on any failure."""
+_E164 = re.compile(r'^\+[1-9]\d{7,14}$')
+
+
+async def send_sms_otp(mobile: str, otp: str) -> None:
+    """Send the OTP as an SMS through Twilio. Raises on any failure."""
+    sender = settings.TWILIO_PHONE_NUMBER.strip()
     if not (settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN
-            and settings.TWILIO_WHATSAPP_FROM):
-        raise RuntimeError('Twilio is not configured')
+            and _E164.match(sender)):
+        # Also catches the "+1XXXXXXXXXX" placeholder, which is not a number.
+        raise RuntimeError('Twilio SMS is not configured')
 
     client = TwilioClient(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
     # The Twilio SDK is blocking; keep it off the event loop.
     await asyncio.to_thread(
         client.messages.create,
-        from_=settings.TWILIO_WHATSAPP_FROM,
-        to=f'whatsapp:+91{mobile}',
-        body=f'Your Obii Cabs OTP is: {otp}. Valid for 5 minutes.'
+        from_=sender,
+        to=f'+91{mobile}',
+        body=f'Your Obii Cabs OTP is: {otp}. Valid 5 minutes.'
     )
 
 async def send_otp(mobile: str, ip: str) -> dict:
@@ -82,11 +87,11 @@ async def send_otp(mobile: str, ip: str) -> dict:
     )
     
     try:
-        await send_whatsapp_otp(mobile, otp)
+        await send_sms_otp(mobile, otp)
     except Exception as e:
         # Don't leave a usable OTP behind for a message that was never sent.
         otp_store.pop(mobile, None)
-        print(f"WhatsApp OTP send failed for {mobile}: {type(e).__name__}")
+        print(f"SMS OTP send failed for {mobile}: {type(e).__name__}")
         return {
             'success': False,
             'message': 'OTP bhej nahi paye. Thodi der baad try karo.'
@@ -94,7 +99,7 @@ async def send_otp(mobile: str, ip: str) -> dict:
 
     return {
         'success': True,
-        'message': 'OTP sent on WhatsApp'
+        'message': 'OTP sent by SMS'
     }
 
 async def verify_otp(
