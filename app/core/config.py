@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     RATE_LIMIT_AI: str = "10/hour"
     # Emails sent on a customer's request (to any address they type in).
     RATE_LIMIT_EMAIL: str = "5/hour"
+    # Safar chat messages (some of them cost a model call).
+    RATE_LIMIT_CHAT: str = "20/minute"
     # Public, unauthenticated pages (blogs): generous, since crawlers read them.
     RATE_LIMIT_PUBLIC: str = "120/minute"
 

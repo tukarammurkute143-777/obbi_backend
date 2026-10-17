@@ -157,6 +157,8 @@ def _clean_context(ctx: Any) -> dict:
     for k in ("from_city", "to_city", "customer_name", "trip_type", "target_keyword"):
         if isinstance(ctx.get(k), str) and ctx[k].strip():
             out[k] = " ".join(html.unescape(ctx[k]).split())[:200]
+    if ctx.get("trusted_route") is True:
+        out["trusted_route"] = True   # the text's distances came straight from Google Maps
     for k in ("days", "target_word_count"):
         v = ctx.get(k)
         if isinstance(v, int) and not isinstance(v, bool) and 0 < v < 100000:
@@ -176,15 +178,21 @@ class ResponseVerifierAgent:
     # ------------------------------------------------------------ public API
 
     async def verify(self, response_type: str, content: Any,
-                     context: Optional[dict] = None) -> dict:
-        """Never raises. See the module docstring for the result."""
+                     context: Optional[dict] = None, deep: bool = True) -> dict:
+        """
+        Never raises. See the module docstring for the result.
+
+        deep=False runs only the rule-based checks (no model pass, no place
+        search). Use it for text we assembled ourselves from trusted data, such
+        as fixed chat templates, where the slow checks add nothing.
+        """
         try:
             if response_type not in RESPONSE_TYPES:
                 return self._rejected(response_type, "response_type",
                                       f"Unknown response_type '{response_type}'.")
             if not isinstance(content, (dict, str)) or not content:
                 return self._rejected(response_type, "input", "content is empty.")
-            return await self._verify(response_type, content, _clean_context(context))
+            return await self._verify(response_type, content, _clean_context(context), deep)
         except Exception as e:
             logger.exception("Verifier crashed: %s", type(e).__name__)
             return self._rejected(response_type, "verifier",
@@ -203,9 +211,9 @@ class ResponseVerifierAgent:
 
     # ----------------------------------------------------------------- main
 
-    async def _verify(self, rtype: str, content: Any, ctx: dict) -> dict:
+    async def _verify(self, rtype: str, content: Any, ctx: dict, deep: bool = True) -> dict:
         key = "verify:" + hashlib.sha256(json.dumps(
-            [rtype, content, ctx], sort_keys=True, default=str).encode()).hexdigest()
+            [rtype, content, ctx, deep], sort_keys=True, default=str).encode()).hexdigest()
         hit = await cache_get(key)
         if hit is not None:
             return {**hit, "cached": True}
@@ -216,13 +224,16 @@ class ResponseVerifierAgent:
 
         # Route and hotel data are not model-written, so the model pass is skipped.
         judge = None
-        if rtype not in ("route", "hotel"):
+        if deep and rtype not in ("route", "hotel"):
             judge = await self._judge(rtype, text, ctx)
             if judge is None:
                 degraded.append("model_review")
 
-        halluc_issues, halluc_score = await self._hallucination(
-            rtype, content, ctx, judge, degraded, corrections)
+        if deep:
+            halluc_issues, halluc_score = await self._hallucination(
+                rtype, content, ctx, judge, degraded, corrections)
+        else:
+            halluc_issues, halluc_score = [], 1.0
         factual_issues = await self._factual(rtype, content, text, ctx, degraded, corrections)
         safety_issues = self._safety(text, judge)
         business_issues = self._business(rtype, content, text, ctx, judge)
@@ -382,7 +393,7 @@ class ResponseVerifierAgent:
             return self._route_plausibility(content)
 
         frm, to = ctx.get("from_city"), ctx.get("to_city")
-        if not (frm and to) or self.route_agent is None or \
+        if not (frm and to) or self.route_agent is None or ctx.get("trusted_route") or \
                 rtype not in ("itinerary", "email", "blog", "chat"):
             return issues
 

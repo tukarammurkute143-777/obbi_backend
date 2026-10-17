@@ -7,6 +7,7 @@ directly, so adding or swapping an agent only touches this file.
 
 import logging
 
+from app.agents.avatar_agent import AvatarAgent
 from app.agents.blog_writer_agent import BlogWriterAgent
 from app.agents.email_reviewer_agent import EmailReviewerAgent
 from app.agents.email_writer_agent import EmailWriterAgent
@@ -30,12 +31,14 @@ class Supervisor:
         self.blog_writer_agent = BlogWriterAgent()
         self.fraud_agent = FraudDetectionAgent
         self.verifier = ResponseVerifierAgent(self.route_agent)
+        self.avatar_agent = AvatarAgent(self)
 
     # ---------------------------------------------------------- verification
 
-    async def verify(self, response_type: str, content, context: dict = None) -> dict:
-        """Run the Response Verifier on anything (e.g. a future chat reply)."""
-        return await self.verifier.verify(response_type, content, context)
+    async def verify(self, response_type: str, content, context: dict = None,
+                     deep: bool = True) -> dict:
+        """Run the Response Verifier on anything (e.g. a chat reply)."""
+        return await self.verifier.verify(response_type, content, context, deep)
 
     @staticmethod
     def _summary(verdict: dict) -> dict:
@@ -263,6 +266,12 @@ class Supervisor:
                                       "issues": verdict.get("issues", [])}
         result.pop("content", None)
         return self._public(result)
+
+    async def chat(self, message: str, user: dict, session_id: str = None,
+                   language: str = None) -> dict:
+        """One Safar chat turn. Raises avatar_agent.SessionAccessError for someone
+        else's session id; everything else comes back as a reply."""
+        return await self.avatar_agent.chat(message, user, session_id, language)
 
     async def fraud_check(self, ip: str, identifier: str = None,
                           device_fingerprint: str = None) -> FraudResult:

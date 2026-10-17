@@ -1,15 +1,18 @@
+import html
 import logging
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
+from app.agents.avatar_agent import SessionAccessError
 from app.agents.supervisor import supervisor
 from app.core.config import settings
 from app.core.middleware import get_current_user, is_owner
 from app.core.rate_limit import limiter
+from app.models.chat import ChatRequest
 from app.models.email import SendItineraryEmailRequest
-from app.services import email_service, itinerary_service
+from app.services import chat_session_service, email_service, itinerary_service
 
 logger = logging.getLogger("safar")
 
@@ -168,3 +171,64 @@ async def email_itinerary(
         raise HTTPException(status_code=502, detail=result["message"])
     await itinerary_service.update_itinerary(itinerary_id, emailed=True)
     return {"success": True, "message": "Itinerary email bhej di gayi hai."}
+
+
+# ------------------------------------------------------------------ Safar chat
+
+
+@router.post("/chat")
+@limiter.limit(settings.RATE_LIMIT_CHAT)
+async def chat(
+    request: Request,
+    body: ChatRequest,
+    user: dict = Depends(get_current_user),
+):
+    """One message to Safar. Pass the returned session_id back to continue."""
+    # The guardrails middleware HTML-encodes request text; undo it so
+    # "what's the distance" is read as typed.
+    try:
+        return await supervisor.chat(
+            html.unescape(body.message), user, body.session_id, body.language)
+    except SessionAccessError:
+        raise HTTPException(status_code=403, detail="Yeh session aapka nahi hai.")
+
+
+async def _own_session(session_id: str, user: dict) -> dict:
+    if not chat_session_service.is_valid_id(session_id):
+        raise HTTPException(status_code=404, detail="Session nahi mili.")
+    session = await chat_session_service.load(session_id)
+    # Someone else's session looks exactly like a missing one.
+    if not session or str(session.get("user_id")) != str(user["id"]):
+        raise HTTPException(status_code=404, detail="Session nahi mili.")
+    return session
+
+
+@router.get("/session/{session_id}")
+async def get_session(
+    request: Request,
+    session_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Conversation history (last 10 messages) and state of one session."""
+    s = await _own_session(session_id, user)
+    return {
+        "session_id": s["session_id"],
+        "language": s["language"],
+        "booking_confirmed": s["booking_confirmed"],
+        "messages": s["messages"],
+        "context": {k: v for k, v in (s.get("context") or {}).items()
+                    if k not in ("awaiting", "pending_intent")},
+        "last_intent": s.get("last_intent"),
+    }
+
+
+@router.delete("/session/{session_id}")
+async def delete_session(
+    request: Request,
+    session_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Clear a conversation: its history is deleted."""
+    s = await _own_session(session_id, user)
+    await chat_session_service.clear(s)
+    return {"success": True}
