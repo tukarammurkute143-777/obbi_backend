@@ -1,4 +1,7 @@
+import asyncio
+
 from google.auth.transport import requests as google_requests
+from twilio.rest import Client as TwilioClient
 from google.oauth2 import id_token as google_id_token
 
 from app.core.config import settings
@@ -56,6 +59,21 @@ def block_ip(ip: str, reason: str):
     # block applies to the very next request instead of after the TTL.
     invalidate_ip_cache(ip)
 
+async def send_whatsapp_otp(mobile: str, otp: str) -> None:
+    """Send the OTP over Twilio WhatsApp. Raises on any failure."""
+    if not (settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN
+            and settings.TWILIO_WHATSAPP_FROM):
+        raise RuntimeError('Twilio is not configured')
+
+    client = TwilioClient(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+    # The Twilio SDK is blocking; keep it off the event loop.
+    await asyncio.to_thread(
+        client.messages.create,
+        from_=settings.TWILIO_WHATSAPP_FROM,
+        to=f'whatsapp:+91{mobile}',
+        body=f'Your Obii Cabs OTP is: {otp}. Valid for 5 minutes.'
+    )
+
 async def send_otp(mobile: str, ip: str) -> dict:
     # Validate mobile
     if not validate_indian_mobile(mobile):
@@ -88,23 +106,21 @@ async def send_otp(mobile: str, ip: str) -> dict:
         'success': False
     }).execute()
     
-    # TODO: Send via WhatsApp API
-    is_production = settings.APP_ENV.strip().lower() == 'production'
+    try:
+        await send_whatsapp_otp(mobile, otp)
+    except Exception as e:
+        # Don't leave a usable OTP behind for a message that was never sent.
+        otp_store.pop(mobile, None)
+        print(f"WhatsApp OTP send failed for {mobile}: {type(e).__name__}")
+        return {
+            'success': False,
+            'message': 'OTP bhej nahi paye. Thodi der baad try karo.'
+        }
 
-    if not is_production:
-        # Both of these hand out the OTP for any number, so they are dev-only:
-        # the response field lets the caller skip WhatsApp entirely, and the
-        # log line would write every OTP into the hosting provider's logs.
-        print(f"OTP for {mobile}: {otp}")
-
-    response = {
+    return {
         'success': True,
         'message': 'OTP sent on WhatsApp'
     }
-    if not is_production:
-        response['dev_otp'] = otp
-
-    return response
 
 async def verify_otp(
     mobile: str,

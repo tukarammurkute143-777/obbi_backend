@@ -37,6 +37,9 @@ langchain-community==0.3.24
 langgraph==0.4.8
 openai==1.86.0
 
+# WhatsApp OTP
+twilio==9.12.0
+
 # Email
 resend==2.10.0
 
