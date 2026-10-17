@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     RATE_LIMIT_GENERAL: str = "100/minute"
     RATE_LIMIT_SEND_OTP: str = "3/hour"
     RATE_LIMIT_VERIFY_OTP: str = "5/hour"
+    # Each uncached /api/safar call bills Google Maps, so cap it below the default.
+    RATE_LIMIT_SAFAR: str = "30/minute"
 
     class Config:
         env_file = ".env"

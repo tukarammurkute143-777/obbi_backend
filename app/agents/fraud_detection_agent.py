@@ -14,17 +14,14 @@ is logged and that one check is skipped; it never blocks a user or raises.
 
 import asyncio
 import ipaddress
-import json
 import logging
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
-import redis.asyncio as aioredis
 
-from app.core.config import settings
+from app.core.cache import cache_get, cache_set
 from app.core.database import db
 from app.core.middleware import invalidate_ip_cache
 
@@ -106,70 +103,13 @@ async def _run(fn, *args, **kwargs):
 
 # ------------------------------------------------------------ reputation cache
 
-_redis: Optional[aioredis.Redis] = None
-_redis_down_until = 0.0
-_local_cache: dict[str, tuple[float, dict]] = {}
-
-
-def _get_redis() -> Optional[aioredis.Redis]:
-    global _redis
-    if time.monotonic() < _redis_down_until:
-        return None
-    if _redis is None:
-        try:
-            _redis = aioredis.from_url(
-                settings.REDIS_URL, socket_connect_timeout=1, socket_timeout=1,
-                decode_responses=True,
-            )
-        except Exception as e:
-            logger.warning("Redis init failed: %s", type(e).__name__)
-            return None
-    return _redis
-
-
-def _mark_redis_down() -> None:
-    # Back off for a minute instead of paying the connect timeout per request.
-    global _redis_down_until
-    _redis_down_until = time.monotonic() + 60
-
-
-async def _cache_get(ip: str) -> Optional[dict]:
-    client = _get_redis()
-    if client is not None:
-        try:
-            raw = await client.get(f"ip_rep:{ip}")
-            if raw:
-                return json.loads(raw)
-        except Exception as e:
-            logger.warning("Redis get failed: %s", type(e).__name__)
-            _mark_redis_down()
-    entry = _local_cache.get(ip)
-    if entry and entry[0] > time.monotonic():
-        return entry[1]
-    return None
-
-
-async def _cache_set(ip: str, value: dict) -> None:
-    # Always keep a process-local copy so a Redis outage only costs sharing.
-    if len(_local_cache) > 5000:
-        _local_cache.clear()
-    _local_cache[ip] = (time.monotonic() + IP_REPUTATION_TTL, value)
-
-    client = _get_redis()
-    if client is not None:
-        try:
-            await client.set(f"ip_rep:{ip}", json.dumps(value), ex=IP_REPUTATION_TTL)
-        except Exception as e:
-            logger.warning("Redis set failed: %s", type(e).__name__)
-            _mark_redis_down()
-
 
 async def get_ip_reputation(ip: str) -> Optional[dict]:
     """
     {'vpn': bool, 'city': str, 'isp': str, ...} for a public IP, or None when
     the lookup is unavailable (callers must treat None as "unknown", not "bad").
     """
-    cached = await _cache_get(ip)
+    cached = await cache_get(f"ip_rep:{ip}")
     if cached is not None:
         return cached
 
@@ -199,7 +139,7 @@ async def get_ip_reputation(ip: str) -> Optional[dict]:
         "country": data.get("country") or "",
         "isp": data.get("isp") or "",
     }
-    await _cache_set(ip, rep)
+    await cache_set(f"ip_rep:{ip}", rep, IP_REPUTATION_TTL)
     return rep
 
 
