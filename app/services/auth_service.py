@@ -37,44 +37,61 @@ def _db_write(query, data: dict, flags: dict):
         return query(data)
 
 FAST2SMS_URL = "https://www.fast2sms.com/dev/bulkV2"
+logger = logging.getLogger(__name__)
 
 
-async def send_sms_otp(mobile: str, otp: str) -> None:
+async def send_sms_otp(mobile: str, otp: str) -> bool:
     """
-    Send the OTP as an SMS through Fast2SMS ("q" quick route). Raises on any
-    failure. `mobile` is the bare 10-digit number, already validated.
+    Send the OTP as an SMS through Fast2SMS ("q" quick route). True only if
+    Fast2SMS accepted it; False for anything else, after logging exactly why.
+    Never raises. `mobile` is the bare 10-digit number, already validated.
 
-    Fast2SMS answers HTTP 200 with {"return": false, ...} for a bad key or an
-    empty wallet, so the body has to be checked, not just the status code.
+    Fast2SMS answers HTTP 200 with {"return": false, ...} for some failures, so
+    the body is checked, not just the status code. The request body carries the
+    OTP and is never logged; Fast2SMS's reply never contains it and is.
     """
     api_key = settings.FAST2SMS_API_KEY.strip()
     if not api_key:
-        raise RuntimeError('Fast2SMS is not configured')
+        logger.error('Fast2SMS: FAST2SMS_API_KEY is empty - set it in .env / the '
+                     'Railway variables and restart')
+        return False
 
-    # The OTP travels in the query string, and httpx logs every request URL at
-    # INFO. Keep it out of our logs.
-    logging.getLogger('httpx').setLevel(logging.WARNING)
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(
-            FAST2SMS_URL,
-            headers={'authorization': api_key},
-            params={
-                'route': 'q',
-                'numbers': mobile,
-                'message': f'Your Obii Cabs OTP is {otp}. Valid 5 minutes. '
-                           'Do not share with anyone.',
-            },
-        )
+    masked = f'******{mobile[-4:]}'
     try:
-        data = resp.json()
-    except ValueError:
-        raise RuntimeError(f'Fast2SMS returned a non-JSON reply (HTTP {resp.status_code})')
-    if resp.status_code != 200 or data.get('return') is not True:
-        # status_code/message from Fast2SMS (e.g. 412 invalid key) - never the OTP.
-        raise RuntimeError(
-            f"Fast2SMS rejected the SMS: {data.get('status_code', resp.status_code)} "
-            f"{str(data.get('message'))[:120]}")
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                FAST2SMS_URL,
+                headers={'authorization': api_key, 'Content-Type': 'application/json'},
+                json={
+                    'route': 'q',
+                    'numbers': mobile,
+                    'message': f'Your Obii Cabs OTP is {otp}. Valid 5 minutes. '
+                               'Do not share.',
+                    'flash': 0,
+                    'dnd': 0,
+                },
+            )
+        try:
+            result = response.json()
+        except ValueError:
+            logger.error('Fast2SMS: reply for %s was not JSON (HTTP %s): %r',
+                         masked, response.status_code, response.text[:300])
+            return False
+
+        if response.status_code == 200 and isinstance(result, dict) \
+                and result.get('return') is True:
+            logger.info('Fast2SMS: accepted SMS for %s: %s', masked, result)
+            return True
+        logger.error('Fast2SMS: rejected SMS for %s (HTTP %s): %s',
+                     masked, response.status_code, result)
+        return False
+    except httpx.TimeoutException:
+        logger.error('Fast2SMS: no reply within 10 seconds for %s', masked)
+        return False
+    except Exception as e:
+        logger.error('Fast2SMS: request for %s failed: %s: %s', masked,
+                     type(e).__name__, e, exc_info=True)
+        return False
 
 
 async def send_otp(mobile: str, ip: str) -> dict:
@@ -108,12 +125,10 @@ async def send_otp(mobile: str, ip: str) -> dict:
         fraud.flags
     )
     
-    try:
-        await send_sms_otp(mobile, otp)
-    except Exception as e:
+    sent = await send_sms_otp(mobile, otp)
+    if not sent:
         # Don't leave a usable OTP behind for a message that was never sent.
         otp_store.pop(mobile, None)
-        print(f"SMS OTP send failed for {mobile}: {type(e).__name__}")
         return {
             'success': False,
             'message': 'OTP bhej nahi paye. Thodi der baad try karo.'

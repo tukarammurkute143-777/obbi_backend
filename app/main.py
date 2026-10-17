@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -17,6 +19,14 @@ from app.api.routes.safar import router as safar_router
 from app.api.routes.blogs import router as blogs_router
 
 load_dotenv()
+
+# Without this only WARNING+ shows and every logger.info() is dropped.
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 app = FastAPI(
     title="Obii Cabs API",
