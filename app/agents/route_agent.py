@@ -108,14 +108,14 @@ class RouteAgent:
         return None
 
     async def _cached(self, kind: str, origin: str, destination: str,
-                      compute) -> dict:
+                      compute, use_cache: bool = True) -> dict:
         origin, destination = _norm(origin), _norm(destination)
         invalid = self._validate(origin, destination)
         if invalid:
             return invalid
 
         key = _cache_key(kind, origin, destination)
-        hit = await cache_get(key)
+        hit = await cache_get(key) if use_cache else None
         if hit is not None:
             return {**hit, "cached": True}
 
@@ -131,11 +131,14 @@ class RouteAgent:
 
     # --------------------------------------------------------- public API
 
-    async def get_distance_and_time(self, origin: str, destination: str) -> dict:
+    async def get_distance_and_time(self, origin: str, destination: str,
+                                    use_cache: bool = True) -> dict:
         """{'success', 'distance_km', 'duration_min', 'duration_text'}"""
-        return await self._cached("dt", origin, destination, self._distance_time)
+        return await self._cached("dt", origin, destination, self._distance_time,
+                                  use_cache)
 
-    async def get_route_info(self, origin: str, destination: str) -> dict:
+    async def get_route_info(self, origin: str, destination: str,
+                             use_cache: bool = True) -> dict:
         """Best route with start/end addresses, summary and turn-by-turn waypoints."""
         async def compute(o, d):
             routes = await self._directions(o, d, alternatives=False)
@@ -143,9 +146,10 @@ class RouteAgent:
                 return routes
             return {"success": True, **self._summarize(routes[0], with_steps=True)}
 
-        return await self._cached("info", origin, destination, compute)
+        return await self._cached("info", origin, destination, compute, use_cache)
 
-    async def get_multiple_routes(self, origin: str, destination: str) -> dict:
+    async def get_multiple_routes(self, origin: str, destination: str,
+                                  use_cache: bool = True) -> dict:
         """Up to 3 route options, shortest travel time first."""
         async def compute(o, d):
             routes = await self._directions(o, d, alternatives=True)
@@ -157,7 +161,7 @@ class RouteAgent:
             )[:MAX_ROUTES]
             return {"success": True, "count": len(options), "routes": options}
 
-        return await self._cached("multi", origin, destination, compute)
+        return await self._cached("multi", origin, destination, compute, use_cache)
 
     # ------------------------------------------------------------ internals
 

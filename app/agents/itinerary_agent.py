@@ -18,7 +18,7 @@ import logging
 import re
 from typing import Any, Optional
 
-from app.core.cache import cache_get, cache_set
+from app.core.cache import cache_delete, cache_get, cache_set
 from app.core.ai_client import AIClientError, ai_client
 from app.core.guardrails import (
     GuardrailError,
@@ -114,16 +114,26 @@ class ItineraryAgent:
 
     # ---------------------------------------------------------- public API
 
-    async def generate(self, input_data: dict) -> dict:
+    async def generate(self, input_data: dict, use_cache: bool = True) -> dict:
+        """use_cache=False skips the cache read (the fresh result is still stored)."""
         try:
-            return await self._generate(input_data)
+            return await self._generate(input_data, use_cache)
         except Exception as e:  # last-resort guard: this method never raises
             logger.exception("Itinerary generation crashed: %s", type(e).__name__)
             return _fail(503, GENERATION_FAILED)
 
     # ------------------------------------------------------------- pipeline
 
-    async def _generate(self, input_data: Any) -> dict:
+    async def evict(self, input_data: dict) -> None:
+        """Drop the cached plan for this request, e.g. after it failed verification."""
+        try:
+            data, error = self._validate(input_guardrails.sanitize(input_data))
+            if not error:
+                await cache_delete(self._cache_key(data))
+        except Exception as e:
+            logger.warning("Itinerary cache evict failed: %s", type(e).__name__)
+
+    async def _generate(self, input_data: Any, use_cache: bool = True) -> dict:
         if not isinstance(input_data, dict):
             return _fail(400, "Request body must be a JSON object.")
 
@@ -136,12 +146,13 @@ class ItineraryAgent:
             return error
 
         key = self._cache_key(data)
-        hit = await cache_get(key)
+        hit = await cache_get(key) if use_cache else None
         if hit is not None:
             return {**hit, "cached": True}
 
         # 3. Real route data
-        route = await self.route_agent.get_route_info(data["from"], data["to"])
+        route = await self.route_agent.get_route_info(
+            data["from"], data["to"], use_cache=use_cache)
         if not route.get("success"):
             logger.warning("Route lookup failed: %s", route.get("message"))
             status = 404 if route.get("status") == 404 else 503
@@ -180,6 +191,8 @@ class ItineraryAgent:
                 "duration_text": route.get("duration_text"),
             },
             # The validated request, so callers can store what was asked for.
+            # The only hotel names the plan was allowed to use (for verification).
+            "hotels_offered": [h["name"] for h in hotels],
             "trip": {k: data[k] for k in
                      ("from", "to", "days", "people", "budget", "trip_type")},
         }

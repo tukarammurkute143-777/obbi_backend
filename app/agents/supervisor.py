@@ -13,8 +13,9 @@ from app.agents.email_writer_agent import EmailWriterAgent
 from app.agents.fraud_detection_agent import FraudDetectionAgent, FraudResult
 from app.agents.hotel_agent import HotelAgent
 from app.agents.itinerary_agent import ItineraryAgent
+from app.agents.response_verifier_agent import ResponseVerifierAgent
 from app.agents.route_agent import RouteAgent
-from app.services import email_service, itinerary_service
+from app.services import blog_service, email_service, itinerary_service
 
 logger = logging.getLogger("supervisor")
 
@@ -28,14 +29,73 @@ class Supervisor:
         self.email_reviewer_agent = EmailReviewerAgent()
         self.blog_writer_agent = BlogWriterAgent()
         self.fraud_agent = FraudDetectionAgent
+        self.verifier = ResponseVerifierAgent(self.route_agent)
+
+    # ---------------------------------------------------------- verification
+
+    async def verify(self, response_type: str, content, context: dict = None) -> dict:
+        """Run the Response Verifier on anything (e.g. a future chat reply)."""
+        return await self.verifier.verify(response_type, content, context)
+
+    @staticmethod
+    def _summary(verdict: dict) -> dict:
+        """What callers get to see of a verdict. Issue details stay in the logs."""
+        return {
+            "status": verdict["status"],
+            "overall_score": verdict["overall_score"],
+            "warnings": sum(1 for i in verdict["issues"] if i["severity"] == "warning"),
+        }
+
+    async def _verified(self, name: str, produce, response_type: str, build,
+                        discard=None) -> dict:
+        """
+        Generate, verify, and on a failed verdict generate once more (fresh,
+        bypassing caches); a second failure is a 503. Anything the agent itself
+        reports as failed is returned untouched.
+
+        produce(fresh) -> agent result     build(result) -> (content, context)
+        discard(result) -> undo a rejected result (evict a cache entry, delete a draft)
+        """
+        for attempt in range(2):
+            result = await self._safe(produce, name, attempt > 0)
+            if not result.get("success"):
+                return result
+            content, context = build(result)
+            verdict = await self.verifier.verify(response_type, content, context)
+            if verdict["acceptable"]:
+                result["verification"] = self._summary(verdict)
+                result["_verdict"] = verdict
+                return result
+            logger.warning("%s response rejected by verifier (attempt %d): score %s",
+                           name, attempt + 1, verdict["overall_score"])
+            if discard:
+                await discard(result)
+        return {"success": False, "status": 503,
+                "message": "Response verify nahi ho paya. Try again."}
+
+    @staticmethod
+    def _payload(result: dict) -> dict:
+        """The agent's data without per-call flags, so identical content always
+        hashes to the same verification cache entry."""
+        return {k: v for k, v in result.items() if k not in ("success", "cached")}
+
+    @staticmethod
+    def _public(result: dict) -> dict:
+        return {k: v for k, v in result.items() if not k.startswith("_")}
+
+    # ---------------------------------------------------------------- agents
 
     async def route(self, origin: str, destination: str, detail: str = "basic") -> dict:
         """detail: 'basic' (distance/time), 'full' (waypoints) or 'multi' (options)."""
-        if detail == "full":
-            return await self.route_agent.get_route_info(origin, destination)
-        if detail == "multi":
-            return await self.route_agent.get_multiple_routes(origin, destination)
-        return await self.route_agent.get_distance_and_time(origin, destination)
+        method = {"full": self.route_agent.get_route_info,
+                  "multi": self.route_agent.get_multiple_routes}.get(
+                      detail, self.route_agent.get_distance_and_time)
+        result = await self._verified(
+            "route",
+            lambda fresh: method(origin, destination, use_cache=not fresh),
+            "route",
+            lambda r: (self._payload(r), {"from_city": origin, "to_city": destination}))
+        return self._public(result)
 
     async def hotel(
         self,
@@ -46,18 +106,37 @@ class Supervisor:
         guests: int = 1,
     ) -> dict:
         """type: 'all' (near attractions), 'budget' or 'premium'."""
-        if type == "budget":
-            return await self._safe(
-                self.hotel_agent.get_budget_hotels, "hotel", destination)
-        if type == "premium":
-            return await self._safe(
-                self.hotel_agent.get_premium_hotels, "hotel", destination)
-        return await self._safe(
-            self.hotel_agent.search_hotels, "hotel",
-            destination, check_in, check_out, guests)
+        def produce(fresh):
+            if type == "budget":
+                return self.hotel_agent.get_budget_hotels(destination, use_cache=not fresh)
+            if type == "premium":
+                return self.hotel_agent.get_premium_hotels(destination, use_cache=not fresh)
+            return self.hotel_agent.search_hotels(
+                destination, check_in, check_out, guests, use_cache=not fresh)
+
+        result = await self._verified(
+            "hotel", produce, "hotel",
+            lambda r: (self._payload(r), {"to_city": destination}))
+        return self._public(result)
 
     async def itinerary(self, input_data: dict) -> dict:
-        return await self._safe(self.itinerary_agent.generate, "itinerary", input_data)
+        """Generate an itinerary and verify it before it can reach the customer."""
+        async def discard(_result):
+            # A plan that failed verification must not be served from cache.
+            await self.itinerary_agent.evict(input_data)
+
+        def build(r):
+            trip = r.get("trip") or {}
+            return ({"itinerary": r["itinerary"], "route": r.get("route")},
+                    {"from_city": trip.get("from"), "to_city": trip.get("to"),
+                     "trip_type": trip.get("trip_type"), "days": trip.get("days"),
+                     "allowed_hotels": r.get("hotels_offered")})
+
+        result = await self._verified(
+            "itinerary",
+            lambda fresh: self.itinerary_agent.generate(input_data, use_cache=not fresh),
+            "itinerary", build, discard)
+        return self._public(result)
 
     async def email(self, input_data: dict, itinerary_id: str = None) -> dict:
         """
@@ -100,9 +179,23 @@ class Supervisor:
             if summary:
                 data.setdefault("itinerary_summary", summary)
 
-        draft = await self._safe(self.email_writer_agent.run, "email_writer", data)
-        if not draft.get("success"):
-            return draft
+        # Write, then verify; one fresh draft if the first is rejected.
+        draft = None
+        for attempt in range(2):
+            candidate = await self._safe(self.email_writer_agent.run, "email_writer", data)
+            if not candidate.get("success"):
+                return candidate
+            verdict = await self.verifier.verify(
+                "email", {"subject": candidate["subject"], "body": candidate["body"]},
+                {"customer_name": data.get("customer_name")})
+            if verdict["acceptable"]:
+                draft = candidate
+                break
+            logger.warning("Email draft rejected by verifier (attempt %d): score %s",
+                           attempt + 1, verdict["overall_score"])
+        if draft is None:
+            return {"success": False, "status": 503,
+                    "message": "Response verify nahi ho paya. Try again."}
 
         review = await self._safe(
             self.email_reviewer_agent.review, "email_reviewer",
@@ -144,9 +237,32 @@ class Supervisor:
                 "failed_checks": review["failed_checks"]}
 
     async def blog(self, input_data: dict) -> dict:
-        """Write a blog and save it as a DRAFT. Never publishes."""
-        return await self._safe(
-            self.blog_writer_agent.generate, "blog_writer", input_data)
+        """Write a blog, verify it, and keep it as a DRAFT. Never publishes."""
+        async def discard(result):
+            # The agent saves a draft before verification; remove a rejected one.
+            try:
+                await blog_service.delete_blog(result["id"])
+            except blog_service.BlogError as e:
+                logger.error("Could not delete rejected draft %s: %s", result["id"], e.message)
+
+        def build(r):
+            full = r["content"]
+            meta = r["blog"]
+            return ({"title": meta["title"], "meta_description": meta["meta_description"],
+                     "content": full, "confidence_score": meta.get("confidence_score")},
+                    {"target_keyword": meta.get("target_keyword"),
+                     "target_word_count": input_data.get("word_count")
+                     if isinstance(input_data, dict) else None})
+
+        result = await self._verified(
+            "blog_writer", lambda fresh: self.blog_writer_agent.generate(input_data),
+            "blog", build, discard)
+        if result.get("success"):
+            verdict = result.get("_verdict") or {}
+            result["verification"] = {**result["verification"],
+                                      "issues": verdict.get("issues", [])}
+        result.pop("content", None)
+        return self._public(result)
 
     async def fraud_check(self, ip: str, identifier: str = None,
                           device_fingerprint: str = None) -> FraudResult:

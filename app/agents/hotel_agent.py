@@ -124,6 +124,7 @@ class HotelAgent:
         check_in: Optional[str] = None,
         check_out: Optional[str] = None,
         guests: int = 1,
+        use_cache: bool = True,
     ) -> dict:
         """
         Top hotels near popular attractions. check_in / check_out (YYYY-MM-DD)
@@ -134,18 +135,21 @@ class HotelAgent:
         if error:
             return error
         result = await self._search(
-            "all", destination, "best hotels in {d} near popular attractions"
+            "all", destination, "best hotels in {d} near popular attractions",
+            use_cache,
         )
         if result.get("success"):
             result = {**result, "check_in": check_in, "check_out": check_out,
                       "guests": guests}
         return result
 
-    async def get_budget_hotels(self, destination: str) -> dict:
-        return await self._search("budget", destination, "budget hotels in {d} India")
+    async def get_budget_hotels(self, destination: str, use_cache: bool = True) -> dict:
+        return await self._search("budget", destination, "budget hotels in {d} India",
+                                  use_cache)
 
-    async def get_premium_hotels(self, destination: str) -> dict:
-        return await self._search("premium", destination, "luxury hotels in {d} India")
+    async def get_premium_hotels(self, destination: str, use_cache: bool = True) -> dict:
+        return await self._search("premium", destination, "luxury hotels in {d} India",
+                                  use_cache)
 
     # ------------------------------------------------------------ internals
 
@@ -165,13 +169,14 @@ class HotelAgent:
             return _fail(400, "Check-out date check-in ke baad honi chahiye.")
         return None
 
-    async def _search(self, kind: str, destination: str, template: str) -> dict:
+    async def _search(self, kind: str, destination: str, template: str,
+                      use_cache: bool = True) -> dict:
         destination = " ".join((destination or "").split())
         if not _DEST.match(destination):
             return _fail(400, "Valid destination daalo.")
 
         key = f"hotels:{kind}:{destination.lower()}"
-        hit = await cache_get(key)
+        hit = await cache_get(key) if use_cache else None
         if hit is not None:
             return {**hit, "cached": True}
 

@@ -156,7 +156,10 @@ class BlogWriterAgent:
         logger.info("Blog draft %s saved: %r (%d words, density %.3f)", saved["id"],
                     saved["title"], saved["word_count"], saved["keyword_density"])
         summary = {k: v for k, v in saved.items() if k != "content"}
-        return {"success": True, "id": saved["id"], "status": "draft", "blog": summary}
+        # `content` is for the supervisor's verification; it removes it before
+        # the response goes to the dashboard.
+        return {"success": True, "id": saved["id"], "status": "draft",
+                "blog": summary, "content": saved["content"]}
 
     # ------------------------------------------------------------ validation
 
