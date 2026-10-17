@@ -3,7 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from slowapi.middleware import SlowAPIMiddleware
 
-from app.core.middleware import IPBlockMiddleware, JWTAuthMiddleware
+from app.core.middleware import (
+    GuardrailsMiddleware,
+    IPBlockMiddleware,
+    JWTAuthMiddleware,
+)
 from app.core.rate_limit import RateLimitExceeded, limiter, rate_limit_handler
 from app.api.routes.auth import router as auth_router
 from app.api.routes.users import router as users_router
@@ -26,12 +30,15 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
 # Middleware order matters. add_middleware puts the most recently added
 # outermost, so registering bottom-up here gives the request path:
 #
-#   CORS  ->  IP block  ->  rate limit  ->  JWT  ->  route
+#   CORS  ->  IP block  ->  rate limit  ->  JWT  ->  guardrails  ->  route
 #
 # CORS outermost so 401/403/429 replies still carry CORS headers (otherwise the
 # browser reports an opaque network error instead of the real status). IP block
 # before the rate limiter so banned callers never consume limiter storage, and
 # the rate limiter before JWT so unauthenticated floods are throttled cheaply.
+# Guardrails sit innermost: they read and rewrite the body, which is wasted work
+# for requests JWT is about to reject.
+app.add_middleware(GuardrailsMiddleware)
 app.add_middleware(JWTAuthMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(IPBlockMiddleware)

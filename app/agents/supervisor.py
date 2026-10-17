@@ -22,7 +22,7 @@ class Supervisor:
     def __init__(self) -> None:
         self.route_agent = RouteAgent()
         self.hotel_agent = HotelAgent()
-        self.itinerary_agent = ItineraryAgent()
+        self.itinerary_agent = ItineraryAgent(self.route_agent, self.hotel_agent)
         self.email_writer_agent = EmailWriterAgent()
         self.email_reviewer_agent = EmailReviewerAgent()
         self.blog_writer_agent = BlogWriterAgent()
@@ -55,8 +55,8 @@ class Supervisor:
             self.hotel_agent.search_hotels, "hotel",
             destination, check_in, check_out, guests)
 
-    async def itinerary(self, *args, **kwargs) -> dict:
-        return await self._safe(self.itinerary_agent.run, "itinerary", *args, **kwargs)
+    async def itinerary(self, input_data: dict) -> dict:
+        return await self._safe(self.itinerary_agent.generate, "itinerary", input_data)
 
     async def email(self, *args, **kwargs) -> dict:
         """Draft with the writer, then pass the draft to the reviewer."""

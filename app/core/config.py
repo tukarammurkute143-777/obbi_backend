@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_EXPIRE_DAYS: int = 7
     OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o"
     GOOGLE_MAPS_API_KEY: str = ""
     TAVILY_API_KEY: str = ""
     REDIS_URL: str = "redis://localhost:6379"
@@ -40,6 +41,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_VERIFY_OTP: str = "5/hour"
     # Each uncached /api/safar call bills Google Maps, so cap it below the default.
     RATE_LIMIT_SAFAR: str = "30/minute"
+    # Per user (JWT subject, else IP), on top of RATE_LIMIT_GENERAL.
+    RATE_LIMIT_USER_HOUR: str = "100/hour"
+    # LLM-backed endpoints (each call costs real money).
+    RATE_LIMIT_AI: str = "10/hour"
 
     class Config:
         env_file = ".env"
